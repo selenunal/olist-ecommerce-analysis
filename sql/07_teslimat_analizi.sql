@@ -27,17 +27,17 @@ FROM clean.orders AS o
 WHERE o.order_status = 'delivered'
     AND o.is_late IS NOT NULL
 GROUP BY teslimat_durumu;
-
 -- 5b. Aylık gecikme oranı ve teslimat süresi
 -- Amaç: Şubat-Mart 2018'deki memnuniyet düşüşü gecikmelerle mi ilgili?
-SELECT
-    o.order_month,
+SELECT o.order_month,
     COUNT(*) AS teslim_edilen,
     ROUND(100.0 * SUM(o.is_late) / COUNT(*), 1) AS gecikme_yuzde,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.delivery_days) AS medyan_teslim_gun
+    PERCENTILE_CONT(0.5) WITHIN GROUP (
+        ORDER BY o.delivery_days
+    ) AS medyan_teslim_gun
 FROM clean.orders AS o
 WHERE o.order_status = 'delivered'
-  AND o.is_late IS NOT NULL
+    AND o.is_late IS NOT NULL
 GROUP BY o.order_month
 ORDER BY o.order_month;
 -- BULGULAR - Alt soru 5 (5a, 5b)
@@ -51,3 +51,42 @@ ORDER BY o.order_month;
 --    sorun mutlak süreden çok, müşteriye verilen tahmini tarihin tutulamaması.
 -- 6. 2018 yazında lojistik iyileşti: medyan teslimat 7-8 gün, Haziran'da gecikme %1,2.
 -- NOT: İlişki çok güçlü ancak korelasyon nedensellik değildir; "güçlü ilişki" olarak raporlanmalı.
+-- 5c. Eyaletlere göre teslimat performansı ve memnuniyet (en büyük 10 eyalet)
+-- Amaç: RJ'nin yavaş büyümesi teslimat sorunlarıyla ilişkili mi?
+WITH eyalet AS (
+    SELECT o.customer_state,
+        COUNT(*) AS teslim_edilen,
+        ROUND(100.0 * SUM(o.is_late) / COUNT(*), 1) AS gecikme_yuzde,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (
+            ORDER BY o.delivery_days
+        ) AS medyan_teslim_gun,
+        ROUND(AVG(r.review_score), 2) AS ortalama_puan,
+        ROUND(
+            100.0 * SUM(
+                CASE
+                    WHEN r.review_score <= 2 THEN 1
+                    ELSE 0
+                END
+            ) / COUNT(r.review_score),
+            1
+        ) AS olumsuz_yuzde
+    FROM clean.orders AS o
+        LEFT JOIN clean.reviews AS r ON o.order_id = r.order_id
+    WHERE o.order_status = 'delivered'
+        AND o.is_late IS NOT NULL
+    GROUP BY o.customer_state
+)
+SELECT *
+FROM eyalet
+ORDER BY teslim_edilen DESC
+LIMIT 10;
+-- BULGULAR - 5c (Eyaletler)
+-- 1. RJ büyük eyaletler içinde en kötü teslimat deneyimine sahip:
+--    gecikme %12,1 (SP %4,5), medyan 12 gün (SP 7), olumsuz oran %18,3 (ilk 10'un en yükseği).
+-- 2. RJ aynı zamanda ilk 10 içinde en yavaş büyüyen eyalet (+%105, Alt soru 2).
+--    -> Alt soru 2 açık sorusu: Zayıf teslimat ile yavaş büyüme arasında güçlü ilişki var.
+-- 3. RJ, SP'ye komşu olmasına rağmen teslimat çok daha kötü; sorun yalnızca mesafe değil.
+-- 4. SP en iyi teslimat performansı (7 gün, %4,5) ve en hızlı büyüme (+%171).
+-- 5. BA da benzer profil: %12,2 gecikme, 17 gün, %17 olumsuz, yavaş büyüme (+%115).
+-- İSTİSNA: ES yüksek gecikmeye (%10,7) rağmen hızlı büyümüş (+%162).
+--          Teslimat tek belirleyici değil; ilişki güçlü ama kesin değil.
